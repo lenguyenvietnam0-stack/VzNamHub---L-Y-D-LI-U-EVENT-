@@ -1,6 +1,6 @@
 --[[
     🌸 VZNAM HUB - LẤY DỮ LIỆU GAME 🌸
-    Fix: UI vừa màn hình + Hook nhẹ không lag
+    Fix: Scroll + Hook an toàn (không phá game)
 ]]
 
 local Players = game:GetService("Players")
@@ -27,18 +27,19 @@ local State = {
     EventLog = {},
     MaxLog = 200,
     HooksOK = false,
-    OldNC = nil,
+    HookedRemotes = {},
     CurrentTab = 1,
     DataText = "",
-    FilterMode = "All",  -- All / Important / Custom
+    FilterMode = "Important",
 }
 
--- ═══ DANH SÁCH REMOTE CẦN LỌC (bỏ qua để đỡ lag) ═══
+-- ═══ FILTER ═══
 local IGNORE_KEYWORDS = {
     "Analytics", "Telemetry", "Observability", "UserGenerated",
     "IdleHop", "SubmitIdle", "Fps", "LibMP", "ClientKit",
     "SharedABTests", "SharedFastFlags", "SoundBus", "SharedFx",
     "Toasts", "ChatFeed", "ProfileMirror", "Preferences", "AwayEarnings",
+    "CmdrClient", "Broadcasts", "StaffConsole",
 }
 
 local IMPORTANT_KEYWORDS = {
@@ -46,17 +47,16 @@ local IMPORTANT_KEYWORDS = {
     "Fusery", "Bloomery", "Storefront", "Gifting", "Codex",
 }
 
-local function ShouldLog(remoteName)
+local function ShouldLog(name)
     if State.FilterMode == "All" then return true end
     if State.FilterMode == "Important" then
         for _, k in ipairs(IMPORTANT_KEYWORDS) do
-            if string.find(remoteName, k, 1, true) then return true end
+            if string.find(name, k, 1, true) then return true end
         end
         return false
     end
-    -- Custom mode: skip only ignore list
     for _, k in ipairs(IGNORE_KEYWORDS) do
-        if string.find(remoteName, k, 1, true) then return false end
+        if string.find(name, k, 1, true) then return false end
     end
     return true
 end
@@ -123,7 +123,6 @@ local function CollectData()
             if prc <= 30 then
                 w("["..prc.."] "..(v.Parent and v.Parent:GetFullName() or "?"))
                 w("     Action=\""..v.ActionText.."\" Obj=\""..v.ObjectText.."\"")
-                w("     Hold="..tostring(v.HoldDuration).."s")
             end
         end
     end
@@ -133,14 +132,13 @@ local function CollectData()
     local rc = 0
     for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
         if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            local name = v:GetFullName()
-            if ShouldLog(name) then
+            if ShouldLog(v:GetFullName()) then
                 rc = rc + 1
-                w("• "..v.ClassName..": "..name)
+                w("• "..v.ClassName..": "..v:GetFullName())
             end
         end
     end
-    w("Tổng: "..rc.." remote quan trọng")
+    w("Tổng: "..rc.." remote")
 
     w(""); w("[5] PLAYERGUI"); ln()
     local pg = lp:FindFirstChildOfClass("PlayerGui")
@@ -161,7 +159,6 @@ local flushPending = false
 local function FlushLog()
     flushPending = false
     if #logBuffer == 0 then return end
-    -- Thêm tất cả vào đầu State.EventLog
     for i = #logBuffer, 1, -1 do
         table.insert(State.EventLog, 1, logBuffer[i])
     end
@@ -170,51 +167,74 @@ local function FlushLog()
     if State.OnAdd then State.OnAdd() end
 end
 
-local function AddLog(remoteName, method, args)
+local function AddLog(name, method, args)
     table.insert(logBuffer, {
         time = os.date("%H:%M:%S"),
-        name = remoteName,
+        name = name,
         method = method,
         argsStr = fmtArgs(args),
     })
     if not flushPending then
         flushPending = true
-        task.delay(0.3, FlushLog)  -- Gom log lại, flush mỗi 0.3s
+        task.delay(0.3, FlushLog)
+    end
+end
+
+-- ═══ HOOK AN TOÀN - Chỉ hook remote cụ thể, KHÔNG dùng __namecall ═══
+local function HookOneRemote(remote)
+    if State.HookedRemotes[remote] then return end
+    if not (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then return end
+
+    local ok = pcall(function()
+        if remote:IsA("RemoteEvent") then
+            local oldFire = remote.FireServer
+            remote.FireServer = newcclosure(function(self, ...)
+                local name = self:GetFullName()
+                pcall(function()
+                    if ShouldLog(name) then
+                        AddLog(name, "FireServer", {...})
+                    end
+                end)
+                return oldFire(self, ...)
+            end)
+        elseif remote:IsA("RemoteFunction") then
+            local oldInvoke = remote.InvokeServer
+            remote.InvokeServer = newcclosure(function(self, ...)
+                local name = self:GetFullName()
+                pcall(function()
+                    if ShouldLog(name) then
+                        AddLog(name, "InvokeServer", {...})
+                    end
+                end)
+                return oldInvoke(self, ...)
+            end)
+        end
+    end)
+
+    if ok then
+        State.HookedRemotes[remote] = true
     end
 end
 
 local function InstallHooks()
     if State.HooksOK then return true end
-    if typeof(hookmetamethod) ~= "function" then return false end
     local ok = pcall(function()
-        State.OldNC = hookmetamethod(game, "__namecall", function(self, ...)
-            local m = getnamecallmethod()
-            -- CHỈ log remote, bỏ qua tất cả thứ khác
-            if (m == "FireServer" or m == "InvokeServer") then
-                local cls = typeof(self)
-                if cls == "Instance" then
-                    local ok2, isRemote = pcall(function()
-                        return self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
-                    end)
-                    if ok2 and isRemote then
-                        local name = self:GetFullName()
-                        if ShouldLog(name) then
-                            pcall(AddLog, name, m, {...})
-                        end
-                    end
+        local RS = game:GetService("ReplicatedStorage")
+        for _, v in ipairs(RS:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                if ShouldLog(v:GetFullName()) then
+                    HookOneRemote(v)
                 end
             end
-            return State.OldNC(self, ...)
-        end)
+        end
     end)
     if ok then State.HooksOK = true; return true end
     return false
 end
 
 local function UninstallHooks()
-    if not State.HooksOK then return end
-    pcall(function() hookmetamethod(game, "__namecall", State.OldNC) end)
     State.HooksOK = false
+    State.HookedRemotes = {}
 end
 _G.VzNamDumperCleanup = UninstallHooks
 
@@ -241,14 +261,12 @@ sg.DisplayOrder = 999999
 sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = ParentGui
 
--- ĐỢI 1 FRAME ĐỂ SCREENGUI BIẾT SIZE THẬT
 RunService.RenderStepped:Wait()
 RunService.RenderStepped:Wait()
 
 local screenSize = sg.AbsoluteSize
 if screenSize.X < 100 then screenSize = Vector2.new(800, 600) end
 
--- Bảng = 92% ngang, 80% dọc
 local W = math.floor(screenSize.X * 0.92)
 local H = math.floor(screenSize.Y * 0.80)
 
@@ -268,7 +286,7 @@ local fs = Instance.new("UIStroke", flower)
 fs.Thickness = 2.5
 fs.Color = Color3.fromRGB(255, 105, 180)
 
--- Main frame
+-- Main
 local main = Instance.new("Frame", sg)
 main.Size = UDim2.new(0, W, 0, H)
 main.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -282,7 +300,7 @@ local ms = Instance.new("UIStroke", main)
 ms.Color = Color3.fromRGB(0, 191, 255)
 ms.Thickness = 2
 
--- Title bar
+-- Title
 local titleBar = Instance.new("Frame", main)
 titleBar.Size = UDim2.new(1, 0, 0, 32)
 titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
@@ -318,7 +336,7 @@ fullCloseBtn.MouseButton1Click:Connect(function()
     sg:Destroy()
 end)
 
--- Tab bar (3 tab)
+-- Tab bar
 local tabBar = Instance.new("Frame", main)
 tabBar.Size = UDim2.new(1, -12, 0, 28)
 tabBar.Position = UDim2.new(0, 6, 0, 38)
@@ -352,32 +370,48 @@ content.Size = UDim2.new(1, -12, 1, -134)
 content.Position = UDim2.new(0, 6, 0, 72)
 content.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 content.BorderSizePixel = 0
+content.ClipsDescendants = true
 Instance.new("UICorner", content).CornerRadius = UDim.new(0, 6)
 
+-- ═══ SCROLL FIX ═══
 local function mkScroll()
     local s = Instance.new("ScrollingFrame", content)
     s.Size = UDim2.new(1, -6, 1, -6)
     s.Position = UDim2.new(0, 3, 0, 3)
     s.BackgroundTransparency = 1
     s.BorderSizePixel = 0
-    s.ScrollBarThickness = 5
+    s.ScrollBarThickness = 8
+    s.ScrollBarImageColor3 = Color3.fromRGB(0, 180, 255)
     s.CanvasSize = UDim2.new(0, 0, 0, 0)
     s.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    s.Visible = false
+    s.ScrollingEnabled = true
     s.ScrollingDirection = Enum.ScrollingDirection.Y
+    s.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+    s.ClipsDescendants = true
+    s.Visible = false
+    s.Active = true
+
     local lbl = Instance.new("TextLabel", s)
-    lbl.Size = UDim2.new(1, -16, 0, 0)
-    lbl.Position = UDim2.new(0, 6, 0, 6)
+    lbl.Size = UDim2.new(1, -20, 0, 0)
+    lbl.Position = UDim2.new(0, 8, 0, 8)
     lbl.BackgroundTransparency = 1
     lbl.Text = ""
     lbl.TextColor3 = Color3.fromRGB(220, 220, 230)
-    lbl.TextSize = 11
+    lbl.TextSize = 12
     lbl.Font = Enum.Font.SourceSans
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.TextYAlignment = Enum.TextYAlignment.Top
     lbl.TextWrapped = true
     lbl.AutomaticSize = Enum.AutomaticSize.Y
-    lbl.LineHeight = 1.1
+    lbl.LineHeight = 1.15
+
+    -- Đảm bảo canvas update khi text đổi
+    lbl:GetPropertyChangedSignal("Text"):Connect(function()
+        task.defer(function()
+            s.CanvasSize = UDim2.new(0, 0, 0, lbl.AbsoluteSize.Y + 30)
+        end)
+    end)
+
     return s, lbl
 end
 
@@ -392,13 +426,14 @@ t3f.BackgroundTransparency = 1
 t3f.Visible = false
 local t3l = Instance.new("UIListLayout", t3f)
 t3l.Padding = UDim.new(0, 5)
+t3l.SortOrder = Enum.SortOrder.LayoutOrder
 t3l.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 local filterBtn = Instance.new("TextButton", t3f)
 filterBtn.Size = UDim2.new(1, -6, 0, 32)
 filterBtn.LayoutOrder = 1
 filterBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
-filterBtn.Text = "🎯 Filter: Tất cả"
+filterBtn.Text = "🎯 Filter: Quan trọng"
 filterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 filterBtn.TextSize = 11
 filterBtn.Font = Enum.Font.GothamBold
@@ -419,24 +454,34 @@ t3s.Size = UDim2.new(1, -6, 1, -76)
 t3s.LayoutOrder = 3
 t3s.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 t3s.BorderSizePixel = 0
-t3s.ScrollBarThickness = 5
+t3s.ScrollBarThickness = 8
+t3s.ScrollBarImageColor3 = Color3.fromRGB(0, 180, 255)
 t3s.CanvasSize = UDim2.new(0, 0, 0, 0)
 t3s.AutomaticCanvasSize = Enum.AutomaticSize.Y
+t3s.ScrollingEnabled = true
+t3s.ClipsDescendants = true
+t3s.Active = true
 Instance.new("UICorner", t3s).CornerRadius = UDim.new(0, 6)
 
 local l3 = Instance.new("TextLabel", t3s)
-l3.Size = UDim2.new(1, -16, 0, 0)
-l3.Position = UDim2.new(0, 6, 0, 6)
+l3.Size = UDim2.new(1, -20, 0, 0)
+l3.Position = UDim2.new(0, 8, 0, 8)
 l3.BackgroundTransparency = 1
 l3.Text = "(Bấm GỘP TẤT CẢ)"
 l3.TextColor3 = Color3.fromRGB(180, 180, 200)
-l3.TextSize = 11
+l3.TextSize = 12
 l3.Font = Enum.Font.SourceSans
 l3.TextXAlignment = Enum.TextXAlignment.Left
 l3.TextYAlignment = Enum.TextYAlignment.Top
 l3.TextWrapped = true
 l3.AutomaticSize = Enum.AutomaticSize.Y
-l3.LineHeight = 1.1
+l3.LineHeight = 1.15
+
+l3:GetPropertyChangedSignal("Text"):Connect(function()
+    task.defer(function()
+        t3s.CanvasSize = UDim2.new(0, 0, 0, l3.AbsoluteSize.Y + 30)
+    end)
+end)
 
 local function ShowTab(n)
     State.CurrentTab = n
@@ -451,8 +496,7 @@ tab1.MouseButton1Click:Connect(function() ShowTab(1) end)
 tab2.MouseButton1Click:Connect(function() ShowTab(2) end)
 tab3.MouseButton1Click:Connect(function() ShowTab(3) end)
 
--- Filter cycle
-local filterModes = {"Tất cả", "Quan trọng", "Lọc lag"}
+local filterModes = {"Quan trọng", "Lọc lag", "Tất cả"}
 local filterIdx = 1
 filterBtn.MouseButton1Click:Connect(function()
     filterIdx = filterIdx + 1
@@ -462,6 +506,9 @@ filterBtn.MouseButton1Click:Connect(function()
     if mode == "Tất cả" then State.FilterMode = "All"
     elseif mode == "Quan trọng" then State.FilterMode = "Important"
     else State.FilterMode = "Custom" end
+    State.HookedRemotes = {}
+    State.HooksOK = false
+    InstallHooks()
 end)
 
 -- Footer
@@ -515,7 +562,7 @@ State.OnAdd = function()
 end
 
 task.spawn(function()
-    task.wait(0.3)
+    task.wait(0.5)
     InstallHooks()
     l2.Text = GetLogText()
 end)
@@ -568,7 +615,7 @@ combBtn.MouseButton1Click:Connect(function()
     out[#out+1] = "═══ PHẦN 1: DATA ═══"
     out[#out+1] = State.DataText
     out[#out+1] = ""
-    out[#out+1] = "═══ PHẦN 2: EVENT LOG ("..#State.EventLog.." events) ═══"
+    out[#out+1] = "═══ PHẦN 2: EVENT LOG ("..#State.EventLog..") ═══"
     out[#out+1] = GetLogText()
     l3.Text = table.concat(out, "\n")
     combBtn.Text = "✅"
@@ -585,39 +632,6 @@ flower.MouseButton1Click:Connect(function()
     end
 end)
 
--- Resize
-local rsz = Instance.new("TextButton", main)
-rsz.Size = UDim2.new(0, 22, 0, 22)
-rsz.Position = UDim2.new(1, -24, 1, -24)
-rsz.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
-rsz.Text = "◢"
-rsz.TextColor3 = Color3.fromRGB(255, 255, 255)
-rsz.TextSize = 14
-rsz.Font = Enum.Font.GothamBold
-rsz.ZIndex = 10
-Instance.new("UICorner", rsz).CornerRadius = UDim.new(0, 5)
-Instance.new("UIStroke", rsz).Color = Color3.fromRGB(0, 200, 255)
-
-local resizing, rStart, rSize = false, nil, nil
-rsz.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        resizing = true; rStart = i.Position; rSize = main.AbsoluteSize
-        rsz.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
-    end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        if resizing then resizing = false; rsz.BackgroundColor3 = Color3.fromRGB(0, 150, 200) end
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if resizing and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-        local d = i.Position - rStart
-        main.Size = UDim2.new(0,
-            math.clamp(rSize.X + d.X, 300, screenSize.X * 0.95), 0,
-            math.clamp(rSize.Y + d.Y, 250, screenSize.Y * 0.9))
-    end
-end)
-
 ShowTab(1)
-print("[VzNamDumper] LOAD XONG - Size: "..W.."x"..H)
+print("[VzNamDumper] LOAD XONG - Filter:", State.FilterMode)
+print("[VzNamDumper] Hook dùng method hook - KHÔNG phá game")
