@@ -1,10 +1,11 @@
 --[[
     🌸 VZNAM HUB - LẤY DỮ LIỆU GAME 🌸
-    Fix tràn viền cho mobile
+    Fix: UI vừa màn hình + Hook nhẹ không lag
 ]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
 
 -- ═══ PARENT ═══
@@ -17,40 +18,57 @@ if not ParentGui then ParentGui = lp:WaitForChild("PlayerGui", 5) end
 if not ParentGui then return warn("Không có parent") end
 
 for _, gui in ipairs(ParentGui:GetChildren()) do
-    if gui.Name == "VzNamDataDumper" then
-        pcall(function() gui:Destroy() end)
-    end
+    if gui.Name == "VzNamDataDumper" then pcall(function() gui:Destroy() end) end
 end
 if _G.VzNamDumperCleanup then pcall(_G.VzNamDumperCleanup) end
-
--- ═══ KÍCH THƯỚC THEO MÀN HÌNH ═══
-local cam = workspace.CurrentCamera
-local viewport = cam and cam.ViewportSize or Vector2.new(800, 600)
--- Bảng chiếm 88% ngang, 75% dọc màn hình
-local W = math.floor(viewport.X * 0.88)
-local H = math.floor(viewport.Y * 0.75)
--- Giới hạn
-W = math.clamp(W, 400, 900)
-H = math.clamp(H, 300, 700)
 
 -- ═══ STATE ═══
 local State = {
     EventLog = {},
-    MaxLog = 300,
+    MaxLog = 200,
     HooksOK = false,
     OldNC = nil,
     CurrentTab = 1,
     DataText = "",
+    FilterMode = "All",  -- All / Important / Custom
 }
+
+-- ═══ DANH SÁCH REMOTE CẦN LỌC (bỏ qua để đỡ lag) ═══
+local IGNORE_KEYWORDS = {
+    "Analytics", "Telemetry", "Observability", "UserGenerated",
+    "IdleHop", "SubmitIdle", "Fps", "LibMP", "ClientKit",
+    "SharedABTests", "SharedFastFlags", "SoundBus", "SharedFx",
+    "Toasts", "ChatFeed", "ProfileMirror", "Preferences", "AwayEarnings",
+}
+
+local IMPORTANT_KEYWORDS = {
+    "EggWorld", "EggCapture", "Steal", "PetSatchel", "Haul",
+    "Fusery", "Bloomery", "Storefront", "Gifting", "Codex",
+}
+
+local function ShouldLog(remoteName)
+    if State.FilterMode == "All" then return true end
+    if State.FilterMode == "Important" then
+        for _, k in ipairs(IMPORTANT_KEYWORDS) do
+            if string.find(remoteName, k, 1, true) then return true end
+        end
+        return false
+    end
+    -- Custom mode: skip only ignore list
+    for _, k in ipairs(IGNORE_KEYWORDS) do
+        if string.find(remoteName, k, 1, true) then return false end
+    end
+    return true
+end
 
 -- ═══ HELPERS ═══
 local function fmtArg(a)
     local t = typeof(a)
     if t == "Instance" then
-        local ok, n = pcall(function() return a:GetFullName() end)
-        return ok and n or "[Inst]"
+        local ok, n = pcall(function() return a.Name end)
+        return ok and ("["..n.."]") or "[Inst]"
     elseif t == "string" then
-        if #a > 50 then a = a:sub(1,47).."..." end
+        if #a > 40 then a = a:sub(1,37).."..." end
         return '"'..a..'"'
     elseif t == "table" then
         local n = 0
@@ -62,7 +80,8 @@ end
 
 local function fmtArgs(args)
     local p = {}
-    for i = 1, #args do p[#p+1] = fmtArg(args[i]) end
+    for i = 1, math.min(#args, 8) do p[#p+1] = fmtArg(args[i]) end
+    if #args > 8 then p[#p+1] = "..." end
     return table.concat(p, ", ")
 end
 
@@ -76,7 +95,7 @@ local function CollectData()
     hr()
     w("VZNAM HUB - GAME DATA DUMP")
     w("Time: "..os.date("%Y-%m-%d %H:%M:%S"))
-    w("Player: "..lp.Name.." ("..lp.UserId..")")
+    w("Player: "..lp.Name)
     w("PlaceId: "..game.PlaceId)
     hr()
 
@@ -101,47 +120,29 @@ local function CollectData()
     for _, v in ipairs(workspace:GetDescendants()) do
         if v:IsA("ProximityPrompt") then
             prc = prc + 1
-            if prc <= 40 then
-                w("["..prc.."] "..(v.Parent and v.Parent:GetFullName() or "nil"))
-                w("     Action: \""..v.ActionText.."\"")
-                w("     Object: \""..v.ObjectText.."\"")
-                w("     Hold: "..tostring(v.HoldDuration).."s")
+            if prc <= 30 then
+                w("["..prc.."] "..(v.Parent and v.Parent:GetFullName() or "?"))
+                w("     Action=\""..v.ActionText.."\" Obj=\""..v.ObjectText.."\"")
+                w("     Hold="..tostring(v.HoldDuration).."s")
             end
         end
     end
     w("Tổng: "..prc.." prompt")
 
-    w(""); w("[4] REMOTES"); ln()
+    w(""); w("[4] REMOTES QUAN TRỌNG"); ln()
     local rc = 0
-    local function scan(parent, depth)
-        if depth > 4 then return end
-        for _, v in ipairs(parent:GetChildren()) do
-            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local name = v:GetFullName()
+            if ShouldLog(name) then
                 rc = rc + 1
-                w("• "..v.ClassName..": "..v:GetFullName())
-            end
-            if v:IsA("Folder") or v:IsA("Model") then
-                scan(v, depth + 1)
+                w("• "..v.ClassName..": "..name)
             end
         end
     end
-    scan(game:GetService("ReplicatedStorage"), 0)
-    w("Tổng: "..rc.." remote")
+    w("Tổng: "..rc.." remote quan trọng")
 
-    w(""); w("[5] ATTRIBUTES"); ln()
-    for _, v in ipairs(workspace:GetChildren()) do
-        local attrs = v:GetAttributes()
-        local has = false
-        for _ in pairs(attrs) do has = true; break end
-        if has then
-            w("→ "..v.Name.."  ["..v.ClassName.."]")
-            for k, val in pairs(attrs) do
-                w("     @"..k.." = "..tostring(val))
-            end
-        end
-    end
-
-    w(""); w("[6] PLAYERGUI"); ln()
+    w(""); w("[5] PLAYERGUI"); ln()
     local pg = lp:FindFirstChildOfClass("PlayerGui")
     if pg then
         for _, v in ipairs(pg:GetChildren()) do
@@ -154,16 +155,32 @@ local function CollectData()
 end
 
 -- ═══ EVENT LOG ═══
-local function AddLog(remote, method, args)
-    local e = {
-        time = os.date("%H:%M:%S"),
-        name = remote:GetFullName(),
-        method = method,
-        argsStr = fmtArgs(args),
-    }
-    table.insert(State.EventLog, 1, e)
+local logBuffer = {}
+local flushPending = false
+
+local function FlushLog()
+    flushPending = false
+    if #logBuffer == 0 then return end
+    -- Thêm tất cả vào đầu State.EventLog
+    for i = #logBuffer, 1, -1 do
+        table.insert(State.EventLog, 1, logBuffer[i])
+    end
+    logBuffer = {}
     while #State.EventLog > State.MaxLog do table.remove(State.EventLog) end
     if State.OnAdd then State.OnAdd() end
+end
+
+local function AddLog(remoteName, method, args)
+    table.insert(logBuffer, {
+        time = os.date("%H:%M:%S"),
+        name = remoteName,
+        method = method,
+        argsStr = fmtArgs(args),
+    })
+    if not flushPending then
+        flushPending = true
+        task.delay(0.3, FlushLog)  -- Gom log lại, flush mỗi 0.3s
+    end
 end
 
 local function InstallHooks()
@@ -172,8 +189,20 @@ local function InstallHooks()
     local ok = pcall(function()
         State.OldNC = hookmetamethod(game, "__namecall", function(self, ...)
             local m = getnamecallmethod()
-            if m == "FireServer" or m == "InvokeServer" then
-                pcall(AddLog, self, m, {...})
+            -- CHỈ log remote, bỏ qua tất cả thứ khác
+            if (m == "FireServer" or m == "InvokeServer") then
+                local cls = typeof(self)
+                if cls == "Instance" then
+                    local ok2, isRemote = pcall(function()
+                        return self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
+                    end)
+                    if ok2 and isRemote then
+                        local name = self:GetFullName()
+                        if ShouldLog(name) then
+                            pcall(AddLog, name, m, {...})
+                        end
+                    end
+                end
             end
             return State.OldNC(self, ...)
         end)
@@ -191,13 +220,12 @@ _G.VzNamDumperCleanup = UninstallHooks
 
 local function GetLogText()
     if #State.EventLog == 0 then
-        return State.HooksOK and "Hook đã bật. Chơi game để bắt event..."
-            or "(Chưa hook được)"
+        return State.HooksOK and "Hook đã bật. Chơi game để bắt event..." or "(Chưa hook)"
     end
     local lines = {}
     for _, e in ipairs(State.EventLog) do
-        lines[#lines+1] = "["..e.time.."]"
-        lines[#lines+1] = "  "..e.name..":"..e.method
+        lines[#lines+1] = "["..e.time.."] "..e.method
+        lines[#lines+1] = "  "..e.name
         lines[#lines+1] = "  Args: "..e.argsStr
         lines[#lines+1] = ""
     end
@@ -212,6 +240,17 @@ sg.IgnoreGuiInset = true
 sg.DisplayOrder = 999999
 sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = ParentGui
+
+-- ĐỢI 1 FRAME ĐỂ SCREENGUI BIẾT SIZE THẬT
+RunService.RenderStepped:Wait()
+RunService.RenderStepped:Wait()
+
+local screenSize = sg.AbsoluteSize
+if screenSize.X < 100 then screenSize = Vector2.new(800, 600) end
+
+-- Bảng = 92% ngang, 80% dọc
+local W = math.floor(screenSize.X * 0.92)
+local H = math.floor(screenSize.Y * 0.80)
 
 -- Nút hoa
 local flower = Instance.new("TextButton", sg)
@@ -229,7 +268,7 @@ local fs = Instance.new("UIStroke", flower)
 fs.Thickness = 2.5
 fs.Color = Color3.fromRGB(255, 105, 180)
 
--- Main frame căn giữa màn hình
+-- Main frame
 local main = Instance.new("Frame", sg)
 main.Size = UDim2.new(0, W, 0, H)
 main.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -245,7 +284,7 @@ ms.Thickness = 2
 
 -- Title bar
 local titleBar = Instance.new("Frame", main)
-titleBar.Size = UDim2.new(1, 0, 0, 34)
+titleBar.Size = UDim2.new(1, 0, 0, 32)
 titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
 titleBar.BorderSizePixel = 0
 titleBar.ZIndex = 2
@@ -255,7 +294,7 @@ local titleLbl = Instance.new("TextLabel", titleBar)
 titleLbl.Size = UDim2.new(1, -50, 1, 0)
 titleLbl.Position = UDim2.new(0, 10, 0, 0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "🌸 LẤY DỮ LIỆU GAME VZNAMHUB"
+titleLbl.Text = "🌸 VZNAM HUB DATA"
 titleLbl.TextColor3 = Color3.fromRGB(0, 200, 255)
 titleLbl.TextSize = 13
 titleLbl.Font = Enum.Font.GothamBold
@@ -263,14 +302,13 @@ titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.ZIndex = 3
 titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
 
--- Nút X
 local fullCloseBtn = Instance.new("TextButton", titleBar)
-fullCloseBtn.Size = UDim2.new(0, 26, 0, 26)
-fullCloseBtn.Position = UDim2.new(1, -30, 0.5, -13)
+fullCloseBtn.Size = UDim2.new(0, 24, 0, 24)
+fullCloseBtn.Position = UDim2.new(1, -28, 0.5, -12)
 fullCloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
 fullCloseBtn.Text = "✕"
 fullCloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-fullCloseBtn.TextSize = 15
+fullCloseBtn.TextSize = 14
 fullCloseBtn.Font = Enum.Font.GothamBold
 fullCloseBtn.ZIndex = 10
 Instance.new("UICorner", fullCloseBtn).CornerRadius = UDim.new(0, 6)
@@ -280,21 +318,20 @@ fullCloseBtn.MouseButton1Click:Connect(function()
     sg:Destroy()
 end)
 
--- Tab bar
+-- Tab bar (3 tab)
 local tabBar = Instance.new("Frame", main)
-tabBar.Size = UDim2.new(1, -12, 0, 30)
-tabBar.Position = UDim2.new(0, 6, 0, 40)
+tabBar.Size = UDim2.new(1, -12, 0, 28)
+tabBar.Position = UDim2.new(0, 6, 0, 38)
 tabBar.BackgroundTransparency = 1
 local tbl = Instance.new("UIListLayout", tabBar)
 tbl.FillDirection = Enum.FillDirection.Horizontal
 tbl.Padding = UDim.new(0, 4)
 tbl.SortOrder = Enum.SortOrder.LayoutOrder
 
--- Tab tự chia đều
 local function mkTab(order, txt)
     local b = Instance.new("TextButton", tabBar)
     b.LayoutOrder = order
-    b.Size = UDim2.new(0.33, -3, 1, 0)  -- 3 tab chia đều
+    b.Size = UDim2.new(0.33, -3, 1, 0)
     b.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
     b.Text = txt
     b.TextColor3 = Color3.fromRGB(220, 220, 230)
@@ -311,8 +348,8 @@ local tab3 = mkTab(3, "📦 Gộp")
 
 -- Content
 local content = Instance.new("Frame", main)
-content.Size = UDim2.new(1, -12, 1, -140)
-content.Position = UDim2.new(0, 6, 0, 76)
+content.Size = UDim2.new(1, -12, 1, -134)
+content.Position = UDim2.new(0, 6, 0, 72)
 content.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 content.BorderSizePixel = 0
 Instance.new("UICorner", content).CornerRadius = UDim.new(0, 6)
@@ -328,7 +365,6 @@ local function mkScroll()
     s.AutomaticCanvasSize = Enum.AutomaticSize.Y
     s.Visible = false
     s.ScrollingDirection = Enum.ScrollingDirection.Y
-
     local lbl = Instance.new("TextLabel", s)
     lbl.Size = UDim2.new(1, -16, 0, 0)
     lbl.Position = UDim2.new(0, 6, 0, 6)
@@ -358,9 +394,19 @@ local t3l = Instance.new("UIListLayout", t3f)
 t3l.Padding = UDim.new(0, 5)
 t3l.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
+local filterBtn = Instance.new("TextButton", t3f)
+filterBtn.Size = UDim2.new(1, -6, 0, 32)
+filterBtn.LayoutOrder = 1
+filterBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
+filterBtn.Text = "🎯 Filter: Tất cả"
+filterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+filterBtn.TextSize = 11
+filterBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", filterBtn).CornerRadius = UDim.new(0, 6)
+
 local combBtn = Instance.new("TextButton", t3f)
-combBtn.Size = UDim2.new(1, -6, 0, 34)
-combBtn.LayoutOrder = 1
+combBtn.Size = UDim2.new(1, -6, 0, 32)
+combBtn.LayoutOrder = 2
 combBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
 combBtn.Text = "🔄 GỘP TẤT CẢ"
 combBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -369,8 +415,8 @@ combBtn.Font = Enum.Font.GothamBold
 Instance.new("UICorner", combBtn).CornerRadius = UDim.new(0, 6)
 
 local t3s = Instance.new("ScrollingFrame", t3f)
-t3s.Size = UDim2.new(1, -6, 1, -46)
-t3s.LayoutOrder = 2
+t3s.Size = UDim2.new(1, -6, 1, -76)
+t3s.LayoutOrder = 3
 t3s.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 t3s.BorderSizePixel = 0
 t3s.ScrollBarThickness = 5
@@ -398,19 +444,30 @@ local function ShowTab(n)
     s2.Visible = (n == 2)
     t3f.Visible = (n == 3)
     for i, b in ipairs({tab1, tab2, tab3}) do
-        b.BackgroundColor3 = (i == n)
-            and Color3.fromRGB(0, 150, 200)
-            or Color3.fromRGB(45, 45, 60)
+        b.BackgroundColor3 = (i == n) and Color3.fromRGB(0, 150, 200) or Color3.fromRGB(45, 45, 60)
     end
 end
 tab1.MouseButton1Click:Connect(function() ShowTab(1) end)
 tab2.MouseButton1Click:Connect(function() ShowTab(2) end)
 tab3.MouseButton1Click:Connect(function() ShowTab(3) end)
 
--- Footer - 4 nút chia đều
+-- Filter cycle
+local filterModes = {"Tất cả", "Quan trọng", "Lọc lag"}
+local filterIdx = 1
+filterBtn.MouseButton1Click:Connect(function()
+    filterIdx = filterIdx + 1
+    if filterIdx > #filterModes then filterIdx = 1 end
+    local mode = filterModes[filterIdx]
+    filterBtn.Text = "🎯 Filter: "..mode
+    if mode == "Tất cả" then State.FilterMode = "All"
+    elseif mode == "Quan trọng" then State.FilterMode = "Important"
+    else State.FilterMode = "Custom" end
+end)
+
+-- Footer
 local footer = Instance.new("Frame", main)
-footer.Size = UDim2.new(1, -12, 0, 40)
-footer.Position = UDim2.new(0, 6, 1, -46)
+footer.Size = UDim2.new(1, -12, 0, 38)
+footer.Position = UDim2.new(0, 6, 1, -44)
 footer.BackgroundTransparency = 1
 local fl = Instance.new("UIListLayout", footer)
 fl.FillDirection = Enum.FillDirection.Horizontal
@@ -420,7 +477,7 @@ fl.SortOrder = Enum.SortOrder.LayoutOrder
 local function mkFoot(order, txt, c)
     local b = Instance.new("TextButton", footer)
     b.LayoutOrder = order
-    b.Size = UDim2.new(0.25, -3, 1, 0)  -- 4 nút chia đều
+    b.Size = UDim2.new(0.25, -3, 1, 0)
     b.BackgroundColor3 = c
     b.Text = txt
     b.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -431,10 +488,10 @@ local function mkFoot(order, txt, c)
     return b
 end
 
-local copyB  = mkFoot(1, "📋 COPY",     Color3.fromRGB(50, 180, 50))
-local saveB  = mkFoot(2, "💾 LƯU",      Color3.fromRGB(50, 120, 220))
-local clearB = mkFoot(3, "🗑️ XÓA",      Color3.fromRGB(180, 80, 50))
-local hideB  = mkFoot(4, "👁 ẨN",      Color3.fromRGB(100, 100, 130))
+local copyB  = mkFoot(1, "📋 COPY",   Color3.fromRGB(50, 180, 50))
+local saveB  = mkFoot(2, "💾 LƯU",    Color3.fromRGB(50, 120, 220))
+local clearB = mkFoot(3, "🗑️ XÓA",    Color3.fromRGB(180, 80, 50))
+local hideB  = mkFoot(4, "👁 ẨN",    Color3.fromRGB(100, 100, 130))
 
 -- ═══ LOGIC ═══
 task.spawn(function()
@@ -471,9 +528,7 @@ end
 
 copyB.MouseButton1Click:Connect(function()
     local ok = false
-    if typeof(setclipboard) == "function" then
-        ok = pcall(setclipboard, GetCurrentText())
-    end
+    if typeof(setclipboard) == "function" then ok = pcall(setclipboard, GetCurrentText()) end
     copyB.Text = ok and "✅" or "❌"
     task.wait(1.5)
     copyB.Text = "📋 COPY"
@@ -481,10 +536,7 @@ end)
 
 saveB.MouseButton1Click:Connect(function()
     if typeof(writefile) ~= "function" then
-        saveB.Text = "❌"
-        task.wait(1.5)
-        saveB.Text = "💾 LƯU"
-        return
+        saveB.Text = "❌"; task.wait(1.5); saveB.Text = "💾 LƯU"; return
     end
     local fname = "VzNamDump_"..os.date("%Y%m%d_%H%M%S")..".txt"
     local ok = pcall(writefile, fname, GetCurrentText())
@@ -495,10 +547,9 @@ end)
 
 clearB.MouseButton1Click:Connect(function()
     State.EventLog = {}
-    l2.Text = "(Đã xóa log)"
-    clearB.Text = "✅"
-    task.wait(1)
-    clearB.Text = "🗑️ XÓA"
+    logBuffer = {}
+    l2.Text = "(Đã xóa)"
+    clearB.Text = "✅"; task.wait(1); clearB.Text = "🗑️ XÓA"
 end)
 
 hideB.MouseButton1Click:Connect(function()
@@ -514,13 +565,13 @@ combBtn.MouseButton1Click:Connect(function()
     out[#out+1] = "  Time: "..os.date("%Y-%m-%d %H:%M:%S")
     out[#out+1] = string.rep("═", 50)
     out[#out+1] = ""
-    out[#out+1] = "══════ PHẦN 1: DATA ══════"
+    out[#out+1] = "═══ PHẦN 1: DATA ═══"
     out[#out+1] = State.DataText
     out[#out+1] = ""
-    out[#out+1] = "══════ PHẦN 2: EVENT LOG ("..#State.EventLog.." events) ══════"
+    out[#out+1] = "═══ PHẦN 2: EVENT LOG ("..#State.EventLog.." events) ═══"
     out[#out+1] = GetLogText()
     l3.Text = table.concat(out, "\n")
-    combBtn.Text = "✅ ĐÃ GỘP"
+    combBtn.Text = "✅"
     task.wait(1)
     combBtn.Text = "🔄 GỘP TẤT CẢ"
 end)
@@ -528,15 +579,13 @@ end)
 flower.MouseButton1Click:Connect(function()
     main.Visible = not main.Visible
     if main.Visible then
-        flower.Text = "✕"
-        fs.Color = Color3.fromRGB(255, 80, 80)
+        flower.Text = "✕"; fs.Color = Color3.fromRGB(255, 80, 80)
     else
-        flower.Text = "🌸"
-        fs.Color = Color3.fromRGB(255, 105, 180)
+        flower.Text = "🌸"; fs.Color = Color3.fromRGB(255, 105, 180)
     end
 end)
 
--- ═══ RESIZE (theo màn hình) ═══
+-- Resize
 local rsz = Instance.new("TextButton", main)
 rsz.Size = UDim2.new(0, 22, 0, 22)
 rsz.Position = UDim2.new(1, -24, 1, -24)
@@ -551,33 +600,22 @@ Instance.new("UIStroke", rsz).Color = Color3.fromRGB(0, 200, 255)
 
 local resizing, rStart, rSize = false, nil, nil
 rsz.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1
-       or i.UserInputType == Enum.UserInputType.Touch then
-        resizing = true
-        rStart = i.Position
-        rSize = main.AbsoluteSize
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        resizing = true; rStart = i.Position; rSize = main.AbsoluteSize
         rsz.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
     end
 end)
 UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1
-       or i.UserInputType == Enum.UserInputType.Touch then
-        if resizing then
-            resizing = false
-            rsz.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
-        end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        if resizing then resizing = false; rsz.BackgroundColor3 = Color3.fromRGB(0, 150, 200) end
     end
 end)
 UserInputService.InputChanged:Connect(function(i)
-    if resizing and (i.UserInputType == Enum.UserInputType.MouseMovement
-       or i.UserInputType == Enum.UserInputType.Touch) then
+    if resizing and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
         local d = i.Position - rStart
-        -- Giới hạn theo màn hình thực
-        local maxW = math.min(viewport.X * 0.95, 1100)
-        local maxH = math.min(viewport.Y * 0.9, 850)
         main.Size = UDim2.new(0,
-            math.clamp(rSize.X + d.X, 320, maxW), 0,
-            math.clamp(rSize.Y + d.Y, 250, maxH))
+            math.clamp(rSize.X + d.X, 300, screenSize.X * 0.95), 0,
+            math.clamp(rSize.Y + d.Y, 250, screenSize.Y * 0.9))
     end
 end)
 
