@@ -1,24 +1,46 @@
 --[[
-    ═══════════════════════════════════════════════════════
     🌸 VZNAM HUB - LẤY DỮ LIỆU GAME 🌸
-    📊 Tab 1: Dữ liệu game (workspace, prompt, remote, GUI)
-    📡 Tab 2: Quét event (SimpleSpy style - hook remote)
-    📦 Tab 3: Gộp tất cả (Data + Event log)
-    ═══════════════════════════════════════════════════════
+    📊 Tab 1: Dữ liệu game
+    📡 Tab 2: Quét event
+    📦 Tab 3: Gộp tất cả
 ]]
 
+print("[VzNamDumper] Bắt đầu load...")
+
+-- ═══════════════════════════════════════════════
+-- SERVICES (an toàn)
+-- ═══════════════════════════════════════════════
 local Players      = game:GetService("Players")
 local RS           = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local CoreGui      = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local lp           = Players.LocalPlayer
 
--- Cleanup
-if CoreGui:FindFirstChild("VzNamDataDumper") then
-    CoreGui.VzNamDataDumper:Destroy()
+-- ═══════════════════════════════════════════════
+-- XÁC ĐỊNH PARENT AN TOÀN
+-- ═══════════════════════════════════════════════
+local ParentGui = lp:FindFirstChildOfClass("PlayerGui")
+if not ParentGui then
+    ParentGui = lp:WaitForChild("PlayerGui", 5)
 end
-if _G.VzNamDumperCleanup then pcall(_G.VzNamDumperCleanup) end
+if not ParentGui then
+    print("[VzNamDumper] ❌ Không tìm được PlayerGui!")
+    return
+end
+
+-- Xóa UI cũ nếu có
+for _, name in ipairs({"VzNamDataDumper"}) do
+    local old = ParentGui:FindFirstChild(name)
+    if old then old:Destroy() end
+    if game:GetService("CoreGui"):FindFirstChild(name) then
+        pcall(function() game:GetService("CoreGui")[name]:Destroy() end)
+    end
+end
+
+if _G.VzNamDumperCleanup then
+    pcall(_G.VzNamDumperCleanup)
+    _G.VzNamDumperCleanup = nil
+end
 
 -- ═══════════════════════════════════════════════
 -- STATE
@@ -28,7 +50,6 @@ local State = {
     MaxLog       = 500,
     HooksActive  = false,
     OldNamecall  = nil,
-    LogPaused    = false,
     CurrentTab   = 1,
     GameDataText = "",
 }
@@ -60,7 +81,7 @@ local function FormatArgs(args)
 end
 
 -- ═══════════════════════════════════════════════
--- TAB 1: GAME DATA COLLECTOR
+-- DATA COLLECTOR
 -- ═══════════════════════════════════════════════
 local function CollectGameData()
     local out = {}
@@ -76,13 +97,11 @@ local function CollectGameData()
     w("JobId: " .. tostring(game.JobId))
     line()
 
-    -- 1. Workspace
     w(""); w("[1] WORKSPACE - CẤP 1"); dash()
     for _, v in ipairs(workspace:GetChildren()) do
         w(string.format("%-30s | %s", v.Name, v.ClassName))
     end
 
-    -- 2. Plots
     w(""); w("[2] PLOT / BASE CỦA PLAYER"); dash()
     local pc = 0
     for _, p in ipairs(Players:GetPlayers()) do
@@ -95,7 +114,6 @@ local function CollectGameData()
     end
     w("→ Tổng: " .. pc .. " plot")
 
-    -- 3. Prompts
     w(""); w("[3] PROXIMITYPROMPT"); dash()
     local prc = 0
     for _, v in ipairs(workspace:GetDescendants()) do
@@ -112,7 +130,6 @@ local function CollectGameData()
     end
     w("→ Tổng: " .. prc .. " prompt")
 
-    -- 4. Remotes
     w(""); w("[4] REMOTE (ReplicatedStorage)"); dash()
     local rc = 0
     local function scanRemotes(parent, depth)
@@ -131,7 +148,6 @@ local function CollectGameData()
     scanRemotes(RS, 0)
     w("→ Tổng: " .. rc .. " remote")
 
-    -- 5. Attributes
     w(""); w("[5] ATTRIBUTE (workspace top-level)"); dash()
     for _, v in ipairs(workspace:GetChildren()) do
         local has = false
@@ -144,7 +160,6 @@ local function CollectGameData()
         end
     end
 
-    -- 6. PlayerGui
     w(""); w("[6] PLAYERGUI"); dash()
     local pg = lp:FindFirstChildOfClass("PlayerGui")
     if pg then
@@ -158,15 +173,13 @@ local function CollectGameData()
 end
 
 -- ═══════════════════════════════════════════════
--- TAB 2: EVENT LOGGER
+-- EVENT LOGGER
 -- ═══════════════════════════════════════════════
 local function AddLogEntry(remote, method, args)
-    if State.LogPaused then return end
     local entry = {
         time    = os.date("%H:%M:%S"),
         name    = remote:GetFullName(),
         method  = method,
-        args    = args,
         argsStr = FormatArgs(args),
     }
     table.insert(State.EventLog, 1, entry)
@@ -178,9 +191,11 @@ end
 
 local function InstallHooks()
     if State.HooksActive then return true end
-    if typeof(hookmetamethod) ~= "function" then return false end
-
-    local ok = pcall(function()
+    if typeof(hookmetamethod) ~= "function" then
+        print("[VzNamDumper] ⚠️ Executor không có hookmetamethod")
+        return false
+    end
+    local ok, err = pcall(function()
         State.OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             local method = getnamecallmethod()
             if method == "FireServer" or method == "InvokeServer" then
@@ -193,9 +208,12 @@ local function InstallHooks()
     end)
     if ok then
         State.HooksActive = true
+        print("[VzNamDumper] ✅ Hook event đã bật")
         return true
+    else
+        print("[VzNamDumper] ❌ Hook fail: " .. tostring(err))
+        return false
     end
-    return false
 end
 
 local function UninstallHooks()
@@ -211,9 +229,9 @@ _G.VzNamDumperCleanup = UninstallHooks
 local function GetLogText()
     if #State.EventLog == 0 then
         if State.HooksActive then
-            return "✅ Hook đã bật. Chơi game để bắt event...\n(Event sẽ hiện ở đây)"
+            return "✅ Hook đã bật. Chơi game để bắt event..."
         end
-        return "(Chưa có event nào. Bật hook và chơi game để bắt event.)"
+        return "(Chưa có event nào. Hook chưa hoạt động.)"
     end
     local lines = {}
     for i, e in ipairs(State.EventLog) do
@@ -229,9 +247,12 @@ end
 local sg = Instance.new("ScreenGui")
 sg.Name = "VzNamDataDumper"
 sg.ResetOnSpawn = false
-sg.Parent = CoreGui
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.Parent = ParentGui
 
--- Nút bông hoa 🌸
+print("[VzNamDumper] Đã tạo ScreenGui trong PlayerGui")
+
+-- Nút bông hoa
 local flower = Instance.new("TextButton", sg)
 flower.Size = UDim2.new(0, 50, 0, 50)
 flower.Position = UDim2.new(0, 20, 0.4, 0)
@@ -257,18 +278,6 @@ glow.BackgroundTransparency = 0.85
 glow.BorderSizePixel = 0
 glow.ZIndex = 0
 Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
-
-task.spawn(function()
-    while flower.Parent do
-        local tw = TweenService:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-            {Size = UDim2.new(1, 14, 1, 14), Position = UDim2.new(0, -7, 0, -7), BackgroundTransparency = 0.7})
-        tw:Play(); task.wait(1.2)
-        if not flower.Parent then break end
-        local tw2 = TweenService:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-            {Size = UDim2.new(1, 8, 1, 8), Position = UDim2.new(0, -4, 0, -4), BackgroundTransparency = 0.85})
-        tw2:Play(); task.wait(1.2)
-    end
-end)
 
 -- Main frame
 local main = Instance.new("Frame", sg)
@@ -304,7 +313,6 @@ tabLayout.FillDirection = Enum.FillDirection.Horizontal
 tabLayout.Padding = UDim.new(0, 5)
 tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local Tabs = {}
 local function MakeTabBtn(order, name)
     local b = Instance.new("TextButton", tabBar)
     b.LayoutOrder = order
@@ -323,7 +331,7 @@ local tab1Btn = MakeTabBtn(1, "📊 Dữ Liệu Game")
 local tab2Btn = MakeTabBtn(2, "📡 Quét Event")
 local tab3Btn = MakeTabBtn(3, "📦 Tất Cả Gộp Lại")
 
--- Content area
+-- Content
 local content = Instance.new("Frame", main)
 content.Size = UDim2.new(1, -16, 1, -138)
 content.Position = UDim2.new(0, 8, 0, 76)
@@ -360,7 +368,7 @@ end
 local scroll1, lbl1 = MakeScroll()
 local scroll2, lbl2 = MakeScroll()
 
--- Tab 3 frame
+-- Tab 3
 local tab3Frame = Instance.new("Frame", content)
 tab3Frame.Size = UDim2.new(1, -8, 1, -8)
 tab3Frame.Position = UDim2.new(0, 4, 0, 4)
@@ -396,7 +404,7 @@ local lbl3 = Instance.new("TextLabel", tab3Scroll)
 lbl3.Size = UDim2.new(1, -10, 0, 0)
 lbl3.Position = UDim2.new(0, 5, 0, 5)
 lbl3.BackgroundTransparency = 1
-lbl3.Text = "(Bấm nút GỘP TẤT CẢ để xem data + event log gộp lại)"
+lbl3.Text = "(Bấm GỘP TẤT CẢ để xem data + event log)"
 lbl3.TextColor3 = Color3.fromRGB(180, 180, 200)
 lbl3.TextSize = 10
 lbl3.Font = Enum.Font.Code
@@ -451,37 +459,39 @@ local saveBtn  = MakeFootBtn(2, "💾 LƯU FILE", Color3.fromRGB(50, 120, 220))
 local clearBtn = MakeFootBtn(3, "🗑️ XÓA LOG",  Color3.fromRGB(180, 80, 50))
 local hideBtn  = MakeFootBtn(4, "✕ ẨN",       Color3.fromRGB(180, 50, 50))
 
--- Data collection
+-- Collect data
 task.spawn(function()
-    lbl1.Text = "Đang thu thập dữ liệu..."
-    task.wait(0.1)
-    State.GameDataText = CollectGameData()
-    lbl1.Text = State.GameDataText
+    local ok, result = pcall(CollectGameData)
+    if ok then
+        State.GameDataText = result
+        lbl1.Text = result
+        print("[VzNamDumper] ✅ Thu thập data xong (" .. #result .. " ký tự)")
+    else
+        lbl1.Text = "❌ Lỗi collect data:\n" .. tostring(result)
+        print("[VzNamDumper] ❌ Collect data fail: " .. tostring(result))
+    end
 end)
 
 -- Log update
-local pendingUpdate = false
-local function ScheduleLogUpdate()
-    if pendingUpdate then return end
-    pendingUpdate = true
+local pending = false
+local function ScheduleLog()
+    if pending then return end
+    pending = true
     task.defer(function()
-        pendingUpdate = false
+        pending = false
         lbl2.Text = GetLogText()
     end)
 end
-State.OnEventAdded = ScheduleLogUpdate
+State.OnEventAdded = ScheduleLog
 
--- Auto-install hooks
+-- Auto hook
 task.spawn(function()
     task.wait(0.3)
-    local ok = InstallHooks()
-    if not ok then
-        lbl2.Text = "❌ Executor không hỗ trợ hookmetamethod!\nKhông thể quét event tự động.\n\nDùng tab 1 để lấy dữ liệu tĩnh."
-    end
-    ScheduleLogUpdate()
+    InstallHooks()
+    ScheduleLog()
 end)
 
--- Copy / Save / Clear
+-- Copy / Save
 local function GetCurrentText()
     if State.CurrentTab == 1 then return lbl1.Text
     elseif State.CurrentTab == 2 then return GetLogText()
@@ -533,7 +543,7 @@ end)
 
 clearBtn.MouseButton1Click:Connect(function()
     State.EventLog = {}
-    lbl2.Text = "(Đã xóa log. Chơi game để bắt event mới.)"
+    lbl2.Text = "(Đã xóa log)"
     clearBtn.Text = "✅ ĐÃ XÓA"
     task.wait(1)
     clearBtn.Text = "🗑️ XÓA LOG"
@@ -546,12 +556,17 @@ hideBtn.MouseButton1Click:Connect(function()
     glow.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
 end)
 
--- Tab 3 combine
+-- Combine
 combineBtn.MouseButton1Click:Connect(function()
     local data = State.GameDataText
     if data == "" then
-        data = CollectGameData()
-        State.GameDataText = data
+        local ok, res = pcall(CollectGameData)
+        if ok then
+            data = res
+            State.GameDataText = res
+        else
+            data = "(Lỗi collect data)"
+        end
     end
     local logText = GetLogText()
     local out = {}
@@ -590,10 +605,9 @@ flower.MouseButton1Click:Connect(function()
 end)
 
 -- ═══════════════════════════════════════════════
--- NÚT KÉO TO NHỎ (góc phải dưới)
+-- NÚT RESIZE
 -- ═══════════════════════════════════════════════
 local resizeBtn = Instance.new("TextButton", main)
-resizeBtn.Name = "ResizeHandle"
 resizeBtn.Size = UDim2.new(0, 22, 0, 22)
 resizeBtn.Position = UDim2.new(1, -22, 1, -22)
 resizeBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
@@ -606,25 +620,7 @@ resizeBtn.Font = Enum.Font.GothamBold
 resizeBtn.ZIndex = 10
 resizeBtn.AutoButtonColor = false
 Instance.new("UICorner", resizeBtn).CornerRadius = UDim.new(0, 5)
-
-local resizeStroke = Instance.new("UIStroke", resizeBtn)
-resizeStroke.Color = Color3.fromRGB(0, 200, 255)
-resizeStroke.Thickness = 1.5
-
-resizeBtn.MouseEnter:Connect(function()
-    TweenService:Create(resizeBtn, TweenInfo.new(0.15), {
-        BackgroundColor3 = Color3.fromRGB(0, 200, 255),
-        BackgroundTransparency = 0
-    }):Play()
-end)
-resizeBtn.MouseLeave:Connect(function()
-    if not resizeBtn:GetAttribute("Dragging") then
-        TweenService:Create(resizeBtn, TweenInfo.new(0.15), {
-            BackgroundColor3 = Color3.fromRGB(0, 150, 200),
-            BackgroundTransparency = 0.3
-        }):Play()
-    end
-end)
+Instance.new("UIStroke", resizeBtn).Color = Color3.fromRGB(0, 200, 255)
 
 local resizing = false
 local resizeStart = nil
@@ -634,13 +630,9 @@ resizeBtn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
        or input.UserInputType == Enum.UserInputType.Touch then
         resizing = true
-        resizeBtn:SetAttribute("Dragging", true)
         resizeStart = input.Position
         startSize = main.AbsoluteSize
-        TweenService:Create(resizeBtn, TweenInfo.new(0.1), {
-            BackgroundColor3 = Color3.fromRGB(80, 220, 80),
-            BackgroundTransparency = 0
-        }):Play()
+        resizeBtn.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
     end
 end)
 
@@ -649,11 +641,7 @@ UserInputService.InputEnded:Connect(function(input)
        or input.UserInputType == Enum.UserInputType.Touch then
         if resizing then
             resizing = false
-            resizeBtn:SetAttribute("Dragging", false)
-            TweenService:Create(resizeBtn, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(0, 150, 200),
-                BackgroundTransparency = 0.3
-            }):Play()
+            resizeBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
         end
     end
 end)
@@ -669,9 +657,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 -- ═══════════════════════════════════════════════
--- KHỞI TẠO
+-- INIT
 -- ═══════════════════════════════════════════════
 ShowTab(1)
-print("[VzNamDumper] ✅ Loaded.")
-print("[VzNamDumper] Tab 1: Data | Tab 2: Events | Tab 3: Combined")
-print("[VzNamDumper] 🌸 = Mở/đóng | ◢ = Kéo resize")
+print("[VzNamDumper] ✅✅✅ LOAD XONG! Nhấn 🌸 để mở menu")
