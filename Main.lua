@@ -4,7 +4,6 @@
 ]]
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
 
@@ -14,15 +13,15 @@ if typeof(gethui) == "function" then
     local ok, h = pcall(gethui)
     if ok and h then ParentGui = h end
 end
-if not ParentGui then
-    ParentGui = lp:WaitForChild("PlayerGui", 5)
-end
+if not ParentGui then ParentGui = lp:WaitForChild("PlayerGui", 5) end
 if not ParentGui then return warn("Không có parent") end
 
-pcall(function()
-    local old = ParentGui:FindFirstChild("VzNamDataDumper")
-    if old then old:Destroy() end
-end)
+-- XÓA HẾT UI CŨ
+for _, gui in ipairs(ParentGui:GetChildren()) do
+    if gui.Name == "VzNamDataDumper" then
+        pcall(function() gui:Destroy() end)
+    end
+end
 if _G.VzNamDumperCleanup then pcall(_G.VzNamDumperCleanup) end
 
 -- ═══ STATE ═══
@@ -74,7 +73,7 @@ local function CollectData()
 
     w(""); w("[1] WORKSPACE"); ln()
     for _, v in ipairs(workspace:GetChildren()) do
-        w(string.format("%-40s | %s", v.Name, v.ClassName))
+        w("• "..v.Name.."  ["..v.ClassName.."]")
     end
 
     w(""); w("[2] PLOT"); ln()
@@ -83,7 +82,7 @@ local function CollectData()
         local plot = workspace:FindFirstChild(p.Name)
         if plot then
             pc = pc + 1
-            w("PLOT: "..plot:GetFullName().." | "..p.Name)
+            w("• "..plot:GetFullName().."  [Owner: "..p.Name.."]")
         end
     end
     w("Tổng: "..pc.." plot")
@@ -95,7 +94,9 @@ local function CollectData()
             prc = prc + 1
             if prc <= 40 then
                 w("["..prc.."] "..(v.Parent and v.Parent:GetFullName() or "nil"))
-                w("    A=\""..v.ActionText.."\" O=\""..v.ObjectText.."\" H="..tostring(v.HoldDuration))
+                w("     Action: \""..v.ActionText.."\"")
+                w("     Object: \""..v.ObjectText.."\"")
+                w("     Hold: "..tostring(v.HoldDuration).."s  Dist: "..tostring(v.MaxActivationDistance))
             end
         end
     end
@@ -108,7 +109,7 @@ local function CollectData()
         for _, v in ipairs(parent:GetChildren()) do
             if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
                 rc = rc + 1
-                w(v.ClassName.." | "..v:GetFullName())
+                w("• "..v.ClassName..": "..v:GetFullName())
             end
             if v:IsA("Folder") or v:IsA("Model") then
                 scan(v, depth + 1)
@@ -124,9 +125,9 @@ local function CollectData()
         local has = false
         for _ in pairs(attrs) do has = true; break end
         if has then
-            w("-> "..v.Name.." ("..v.ClassName..")")
+            w("→ "..v.Name.."  ["..v.ClassName.."]")
             for k, val in pairs(attrs) do
-                w("   @"..k.." = "..tostring(val))
+                w("     @"..k.." = "..tostring(val))
             end
         end
     end
@@ -135,7 +136,7 @@ local function CollectData()
     local pg = lp:FindFirstChildOfClass("PlayerGui")
     if pg then
         for _, v in ipairs(pg:GetChildren()) do
-            w("GUI: "..v.Name)
+            w("• "..v.Name)
         end
     end
 
@@ -152,9 +153,7 @@ local function AddLog(remote, method, args)
         argsStr = fmtArgs(args),
     }
     table.insert(State.EventLog, 1, e)
-    while #State.EventLog > State.MaxLog do
-        table.remove(State.EventLog)
-    end
+    while #State.EventLog > State.MaxLog do table.remove(State.EventLog) end
     if State.OnAdd then State.OnAdd() end
 end
 
@@ -183,12 +182,15 @@ _G.VzNamDumperCleanup = UninstallHooks
 
 local function GetLogText()
     if #State.EventLog == 0 then
-        return State.HooksOK and "Hook đã bật. Chơi game để bắt event..." 
+        return State.HooksOK and "Hook đã bật. Chơi game để bắt event..."
             or "(Chưa hook được)"
     end
     local lines = {}
     for _, e in ipairs(State.EventLog) do
-        lines[#lines+1] = "["..e.time.."] "..e.name..":"..e.method.."("..e.argsStr..")"
+        lines[#lines+1] = "["..e.time.."]"
+        lines[#lines+1] = "  "..e.name..":"..e.method
+        lines[#lines+1] = "  Args: "..e.argsStr
+        lines[#lines+1] = ""
     end
     return table.concat(lines, "\n")
 end
@@ -218,10 +220,10 @@ local fs = Instance.new("UIStroke", flower)
 fs.Thickness = 2.5
 fs.Color = Color3.fromRGB(255, 105, 180)
 
--- Main frame TO HƠN
+-- Main frame
 local main = Instance.new("Frame", sg)
-main.Size = UDim2.new(0, 640, 0, 520)
-main.Position = UDim2.new(0.5, -320, 0.5, -260)
+main.Size = UDim2.new(0, 700, 0, 540)
+main.Position = UDim2.new(0.5, -350, 0.5, -270)
 main.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
 main.BorderSizePixel = 0
 main.Active = true
@@ -231,22 +233,16 @@ local ms = Instance.new("UIStroke", main)
 ms.Color = Color3.fromRGB(0, 191, 255)
 ms.Thickness = 2
 
--- Title bar với 2 nút
+-- Title bar
 local titleBar = Instance.new("Frame", main)
-titleBar.Size = UDim2.new(1, 0, 0, 34)
-titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
 titleBar.BorderSizePixel = 0
+titleBar.ZIndex = 2
 Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
 
--- Che góc dưới của title bar để bo tròn chỉ ở trên
-local titleCover = Instance.new("Frame", titleBar)
-titleCover.Size = UDim2.new(1, 0, 0, 8)
-titleCover.Position = UDim2.new(0, 0, 1, -8)
-titleCover.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-titleCover.BorderSizePixel = 0
-
 local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Size = UDim2.new(1, -100, 1, 0)
+titleLbl.Size = UDim2.new(1, -90, 1, 0)
 titleLbl.Position = UDim2.new(0, 10, 0, 0)
 titleLbl.BackgroundTransparency = 1
 titleLbl.Text = "🌸 LẤY DỮ LIỆU GAME VZNAMHUB"
@@ -254,28 +250,30 @@ titleLbl.TextColor3 = Color3.fromRGB(0, 200, 255)
 titleLbl.TextSize = 14
 titleLbl.Font = Enum.Font.GothamBold
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.ZIndex = 3
 
--- Nút X TẮT HẲN
+-- Nút X tắt hẳn - ĐẶT ZINDEX CAO NHẤT
 local fullCloseBtn = Instance.new("TextButton", titleBar)
-fullCloseBtn.Size = UDim2.new(0, 30, 0, 30)
-fullCloseBtn.Position = UDim2.new(1, -34, 0.5, -15)
-fullCloseBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+fullCloseBtn.Size = UDim2.new(0, 28, 0, 28)
+fullCloseBtn.Position = UDim2.new(1, -34, 0.5, -14)
+fullCloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
 fullCloseBtn.Text = "✕"
 fullCloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 fullCloseBtn.TextSize = 16
 fullCloseBtn.Font = Enum.Font.GothamBold
+fullCloseBtn.ZIndex = 10
 Instance.new("UICorner", fullCloseBtn).CornerRadius = UDim.new(0, 6)
 
 fullCloseBtn.MouseButton1Click:Connect(function()
     UninstallHooks()
     sg:Destroy()
-    print("[VzNamDumper] ❌ Đã tắt hoàn toàn")
+    print("[VzNamDumper] Đã tắt hoàn toàn")
 end)
 
 -- Tab bar
 local tabBar = Instance.new("Frame", main)
-tabBar.Size = UDim2.new(1, -16, 0, 30)
-tabBar.Position = UDim2.new(0, 8, 0, 42)
+tabBar.Size = UDim2.new(1, -16, 0, 32)
+tabBar.Position = UDim2.new(0, 8, 0, 44)
 tabBar.BackgroundTransparency = 1
 local tbl = Instance.new("UIListLayout", tabBar)
 tbl.FillDirection = Enum.FillDirection.Horizontal
@@ -285,11 +283,11 @@ tbl.SortOrder = Enum.SortOrder.LayoutOrder
 local function mkTab(order, txt)
     local b = Instance.new("TextButton", tabBar)
     b.LayoutOrder = order
-    b.Size = UDim2.new(0, 200, 1, 0)
+    b.Size = UDim2.new(0, 222, 1, 0)
     b.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
     b.Text = txt
     b.TextColor3 = Color3.fromRGB(220, 220, 230)
-    b.TextSize = 11
+    b.TextSize = 12
     b.Font = Enum.Font.GothamBold
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
     return b
@@ -301,13 +299,12 @@ local tab3 = mkTab(3, "📦 Tất Cả Gộp Lại")
 
 -- Content
 local content = Instance.new("Frame", main)
-content.Size = UDim2.new(1, -16, 1, -144)
-content.Position = UDim2.new(0, 8, 0, 78)
+content.Size = UDim2.new(1, -16, 1, -150)
+content.Position = UDim2.new(0, 8, 0, 82)
 content.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 content.BorderSizePixel = 0
 Instance.new("UICorner", content).CornerRadius = UDim.new(0, 6)
 
--- Scroll generic với TEXT WRAP
 local function mkScroll()
     local s = Instance.new("ScrollingFrame", content)
     s.Size = UDim2.new(1, -8, 1, -8)
@@ -321,17 +318,19 @@ local function mkScroll()
     s.ScrollingDirection = Enum.ScrollingDirection.Y
 
     local lbl = Instance.new("TextLabel", s)
-    lbl.Size = UDim2.new(1, -14, 0, 0)
-    lbl.Position = UDim2.new(0, 6, 0, 5)
+    lbl.Size = UDim2.new(1, -20, 0, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 8)
     lbl.BackgroundTransparency = 1
     lbl.Text = ""
     lbl.TextColor3 = Color3.fromRGB(220, 220, 230)
-    lbl.TextSize = 11
-    lbl.Font = Enum.Font.Code
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.SourceSans  -- Font có hỗ trợ wrap tốt
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.TextYAlignment = Enum.TextYAlignment.Top
-    lbl.TextWrapped = true  -- TỰ XUỐNG DÒNG
+    lbl.TextWrapped = true
+    lbl.RichText = false
     lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.LineHeight = 1.1
     return s, lbl
 end
 
@@ -349,17 +348,17 @@ t3l.Padding = UDim.new(0, 5)
 t3l.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 local combBtn = Instance.new("TextButton", t3f)
-combBtn.Size = UDim2.new(1, -10, 0, 34)
+combBtn.Size = UDim2.new(1, -10, 0, 36)
 combBtn.LayoutOrder = 1
 combBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
 combBtn.Text = "🔄 GỘP TẤT CẢ"
 combBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-combBtn.TextSize = 12
+combBtn.TextSize = 13
 combBtn.Font = Enum.Font.GothamBold
 Instance.new("UICorner", combBtn).CornerRadius = UDim.new(0, 6)
 
 local t3s = Instance.new("ScrollingFrame", t3f)
-t3s.Size = UDim2.new(1, -10, 1, -48)
+t3s.Size = UDim2.new(1, -10, 1, -50)
 t3s.LayoutOrder = 2
 t3s.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
 t3s.BorderSizePixel = 0
@@ -369,17 +368,18 @@ t3s.AutomaticCanvasSize = Enum.AutomaticSize.Y
 Instance.new("UICorner", t3s).CornerRadius = UDim.new(0, 6)
 
 local l3 = Instance.new("TextLabel", t3s)
-l3.Size = UDim2.new(1, -14, 0, 0)
-l3.Position = UDim2.new(0, 6, 0, 5)
+l3.Size = UDim2.new(1, -20, 0, 0)
+l3.Position = UDim2.new(0, 10, 0, 8)
 l3.BackgroundTransparency = 1
 l3.Text = "(Bấm GỘP TẤT CẢ để xem data + log)"
 l3.TextColor3 = Color3.fromRGB(180, 180, 200)
-l3.TextSize = 11
-l3.Font = Enum.Font.Code
+l3.TextSize = 12
+l3.Font = Enum.Font.SourceSans
 l3.TextXAlignment = Enum.TextXAlignment.Left
 l3.TextYAlignment = Enum.TextYAlignment.Top
 l3.TextWrapped = true
 l3.AutomaticSize = Enum.AutomaticSize.Y
+l3.LineHeight = 1.1
 
 local function ShowTab(n)
     State.CurrentTab = n
@@ -398,8 +398,8 @@ tab3.MouseButton1Click:Connect(function() ShowTab(3) end)
 
 -- Footer
 local footer = Instance.new("Frame", main)
-footer.Size = UDim2.new(1, -16, 0, 40)
-footer.Position = UDim2.new(0, 8, 1, -48)
+footer.Size = UDim2.new(1, -16, 0, 42)
+footer.Position = UDim2.new(0, 8, 1, -50)
 footer.BackgroundTransparency = 1
 local fl = Instance.new("UIListLayout", footer)
 fl.FillDirection = Enum.FillDirection.Horizontal
@@ -409,11 +409,11 @@ fl.SortOrder = Enum.SortOrder.LayoutOrder
 local function mkFoot(order, txt, c)
     local b = Instance.new("TextButton", footer)
     b.LayoutOrder = order
-    b.Size = UDim2.new(0, 150, 1, 0)
+    b.Size = UDim2.new(0, 165, 1, 0)
     b.BackgroundColor3 = c
     b.Text = txt
     b.TextColor3 = Color3.fromRGB(255, 255, 255)
-    b.TextSize = 11
+    b.TextSize = 12
     b.Font = Enum.Font.GothamBold
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
     return b
@@ -501,15 +501,15 @@ end)
 
 combBtn.MouseButton1Click:Connect(function()
     local out = {}
-    out[#out+1] = "════════════════════════════════════════"
+    out[#out+1] = string.rep("═", 60)
     out[#out+1] = "  VZNAM HUB - COMBINED DUMP"
     out[#out+1] = "  Time: "..os.date("%Y-%m-%d %H:%M:%S")
-    out[#out+1] = "════════════════════════════════════════"
+    out[#out+1] = string.rep("═", 60)
     out[#out+1] = ""
-    out[#out+1] = "═══ PHẦN 1: DATA ═══"
+    out[#out+1] = "══════ PHẦN 1: DATA ══════"
     out[#out+1] = State.DataText
     out[#out+1] = ""
-    out[#out+1] = "═══ PHẦN 2: EVENT LOG ("..#State.EventLog.." events) ═══"
+    out[#out+1] = "══════ PHẦN 2: EVENT LOG ("..#State.EventLog.." events) ══════"
     out[#out+1] = GetLogText()
     l3.Text = table.concat(out, "\n")
     combBtn.Text = "✅ ĐÃ GỘP"
@@ -565,8 +565,8 @@ UserInputService.InputChanged:Connect(function(i)
        or i.UserInputType == Enum.UserInputType.Touch) then
         local d = i.Position - rStart
         main.Size = UDim2.new(0,
-            math.clamp(rSize.X + d.X, 500, 1000), 0,
-            math.clamp(rSize.Y + d.Y, 400, 800))
+            math.clamp(rSize.X + d.X, 500, 1100), 0,
+            math.clamp(rSize.Y + d.Y, 400, 850))
     end
 end)
 
